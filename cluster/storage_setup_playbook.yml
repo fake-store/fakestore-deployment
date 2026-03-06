@@ -1,0 +1,77 @@
+---
+# Configures persistent SATA storage on the designated storage node (pi3).
+# Run this after cluster_setup_playbook.yml, before deploying fakestore services.
+#
+#   ansible-playbook -i inventory.ini storage_setup_playbook.yml
+
+- name: Configure SATA SSD on storage node (pi3)
+  hosts: pi3
+  become: yes
+  gather_facts: yes
+
+  vars:
+    sata_device: /dev/sda1
+    mount_point: /mnt/sata
+    postgres_uid: 999   # postgres user inside the container
+    postgres_gid: 999
+
+  tasks:
+    - name: Install e2fsprogs (provides blkid, mkfs.ext4)
+      apt:
+        name: e2fsprogs
+        state: present
+        update_cache: yes
+
+    - name: Check if SATA device exists
+      stat:
+        path: "{{ sata_device }}"
+      register: sata_dev
+
+    - name: Fail if SATA device not found
+      fail:
+        msg: "SATA device {{ sata_device }} not found on {{ inventory_hostname }}. Check drive is connected."
+      when: not sata_dev.stat.exists
+
+    - name: Check if device already has a filesystem
+      command: blkid -s TYPE -o value {{ sata_device }}
+      register: existing_fs
+      changed_when: false
+      failed_when: false
+
+    - name: Format device as ext4 if no filesystem present
+      command: mkfs.ext4 -L fakestore-data {{ sata_device }}
+      when: existing_fs.stdout == ""
+
+    - name: Ensure mount point exists
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Get device UUID
+      command: blkid -s UUID -o value {{ sata_device }}
+      register: device_uuid
+      changed_when: false
+
+    - name: Add fstab entry for persistent mount
+      lineinfile:
+        path: /etc/fstab
+        line: "UUID={{ device_uuid.stdout }} {{ mount_point }} ext4 defaults,noatime 0 2"
+        regexp: "^UUID={{ device_uuid.stdout }}"
+        state: present
+
+    - name: Mount the drive
+      mount:
+        path: "{{ mount_point }}"
+        src: "UUID={{ device_uuid.stdout }}"
+        fstype: ext4
+        opts: defaults,noatime
+        state: mounted
+
+    - name: Create postgres data directory
+      file:
+        path: "{{ mount_point }}/data/postgres"
+        state: directory
+        owner: "{{ postgres_uid }}"
+        group: "{{ postgres_gid }}"
+        mode: '0750'

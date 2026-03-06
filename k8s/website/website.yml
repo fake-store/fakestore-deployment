@@ -1,0 +1,60 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: website-config
+  namespace: fakestore
+data:
+  USERS_SERVICE_URL: "http://users-service.fakestore.svc.cluster.local:8080"
+  SPRING_PROFILES_ACTIVE: "k8s"
+  SERVER_PORT: "8080"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: website
+  namespace: fakestore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: website
+  template:
+    metadata:
+      labels:
+        app: website
+    spec:
+      containers:
+        - name: website
+          image: ghcr.io/fake-store/fakestore-website:sha-df68f61
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: website-config
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: website-service
+  namespace: fakestore
+spec:
+  selector:
+    app: website
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
