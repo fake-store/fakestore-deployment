@@ -6,6 +6,9 @@ metadata:
   namespace: fakestore
 data:
   USERS_SERVICE_URL: "http://users-service.fakestore.svc.cluster.local:8080"
+  PAYMENTS_SERVICE_URL: "http://payments-service.fakestore.svc.cluster.local:8080"
+  ORDERS_SERVICE_URL: "http://orders-service.fakestore.svc.cluster.local:8080"
+  SHIPPING_SERVICE_URL: "http://shipping-service.fakestore.svc.cluster.local:8080"
   SPRING_PROFILES_ACTIVE: "k8s"
   SERVER_PORT: "8080"
 ---
@@ -26,7 +29,7 @@ spec:
     spec:
       containers:
         - name: website
-          image: ghcr.io/fake-store/fakestore-website:sha-42470e6
+          image: ghcr.io/fake-store/fakestore-website:sha-bd1e0cc
           ports:
             - containerPort: 8080
           envFrom:

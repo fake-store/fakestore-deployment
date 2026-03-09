@@ -1,0 +1,41 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: notifications-config
+  namespace: fakestore
+data:
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.fakestore.svc.cluster.local:9092"
+  KAFKA_GROUP_ID: "notifications-service"
+  KAFKA_TOPIC: "shipping.order.shipped"
+  USERS_SERVICE_URL: "http://users-service.fakestore.svc.cluster.local:8080"
+  RUST_LOG: "info"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notifications
+  namespace: fakestore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: notifications
+  template:
+    metadata:
+      labels:
+        app: notifications
+    spec:
+      containers:
+        - name: notifications
+          image: ghcr.io/fake-store/fakestore-notifications:sha-a946871
+          envFrom:
+            - configMapRef:
+                name: notifications-config
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"

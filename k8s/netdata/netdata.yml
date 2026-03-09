@@ -1,0 +1,225 @@
+---
+# Netdata needs read access to the k8s API to collect cluster/pod/node metadata.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: netdata
+  namespace: netdata
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: netdata
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/metrics
+      - pods
+      - services
+      - endpoints
+      - namespaces
+      - persistentvolumes
+      - persistentvolumeclaims
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - daemonsets
+      - statefulsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: netdata
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: netdata
+subjects:
+  - kind: ServiceAccount
+    name: netdata
+    namespace: netdata
+
+---
+# Streaming API key shared between parent and agents.
+# Replace this UUID with your own: uuidgen or https://www.uuidgenerator.net
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netdata-parent-config
+  namespace: netdata
+data:
+  stream.conf: |
+    # Accept streaming connections from agents using this API key.
+    [df7d17f2-7fc1-4e9a-abd2-b7aec92eae80]
+        enabled = yes
+        allow from = *
+        default memory mode = ram
+        health enabled by default = auto
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: netdata-agent-config
+  namespace: netdata
+data:
+  stream.conf: |
+    # Stream all metrics to the parent; agents don't need a local dashboard.
+    [stream]
+        enabled = yes
+        destination = netdata-parent.netdata.svc.cluster.local:19999
+        api key = df7d17f2-7fc1-4e9a-abd2-b7aec92eae80
+        timeout seconds = 60
+        reconnect delay seconds = 5
+        buffer size bytes = 1048576
+
+---
+# Parent: receives streams from all agents, serves the dashboard.
+# No host mounts — it's only an aggregator.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: netdata-parent
+  namespace: netdata
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: netdata-parent
+  template:
+    metadata:
+      labels:
+        app: netdata-parent
+    spec:
+      serviceAccountName: netdata
+      containers:
+        - name: netdata
+          image: netdata/netdata:stable
+          ports:
+            - containerPort: 19999
+          volumeMounts:
+            - name: stream-conf
+              mountPath: /etc/netdata/stream.conf
+              subPath: stream.conf
+          livenessProbe:
+            httpGet:
+              path: /api/v1/info
+              port: 19999
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /api/v1/info
+              port: 19999
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: stream-conf
+          configMap:
+            name: netdata-parent-config
+---
+# Expose the dashboard.
+# NodePort 30999 → accessible at http://<any-node-ip>:30999 from your LAN.
+apiVersion: v1
+kind: Service
+metadata:
+  name: netdata-parent
+  namespace: netdata
+spec:
+  selector:
+    app: netdata-parent
+  ports:
+    - port: 19999
+      targetPort: 19999
+      nodePort: 30999
+  type: NodePort
+
+---
+# Agent DaemonSet: one pod per node.
+# Mounts /proc and /sys for hardware/OS metrics (CPU, memory, disk, network, temps).
+# hostPID + hostNetwork: needed for process and network interface visibility.
+# Streams everything to the parent; no local dashboard served.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: netdata-agent
+  namespace: netdata
+spec:
+  selector:
+    matchLabels:
+      app: netdata-agent
+  template:
+    metadata:
+      labels:
+        app: netdata-agent
+    spec:
+      serviceAccountName: netdata
+      hostPID: true
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet   # keep k8s DNS working with hostNetwork
+      tolerations:
+        - operator: Exists  # run on all nodes, including control-plane
+      containers:
+        - name: netdata
+          image: netdata/netdata:stable
+          env:
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - name: stream-conf
+              mountPath: /etc/netdata/stream.conf
+              subPath: stream.conf
+            - name: proc
+              mountPath: /host/proc
+              readOnly: true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: os-release
+              mountPath: /host/etc/os-release
+              readOnly: true
+          securityContext:
+            capabilities:
+              add:
+                - SYS_PTRACE   # process visibility
+                - SYS_ADMIN    # cgroup & disk stats on some kernels
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "192Mi"
+              cpu: "200m"
+      volumes:
+        - name: stream-conf
+          configMap:
+            name: netdata-agent-config
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: os-release
+          hostPath:
+            path: /etc/os-release
