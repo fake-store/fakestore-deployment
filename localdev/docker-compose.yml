@@ -10,8 +10,13 @@ services:
     environment:
       POSTGRES_DB: fakestore_users
       POSTGRES_USER: fakestore_admin
-      POSTGRES_PASSWORD: localadminpassword
-      POSTGRES_DATA_PASSWORD: localpassword
+      POSTGRES_PASSWORD: ${PG_ADMIN_PASSWORD}
+      POSTGRES_USERS_ADMIN_PASSWORD: ${USERS_DB_ADMIN_PASSWORD}
+      POSTGRES_USERS_DATA_PASSWORD: ${USERS_DB_PASSWORD}
+      POSTGRES_ORDERS_ADMIN_PASSWORD: ${ORDERS_DB_ADMIN_PASSWORD}
+      POSTGRES_ORDERS_DATA_PASSWORD: ${ORDERS_DB_PASSWORD}
+      POSTGRES_CATALOG_ADMIN_PASSWORD: ${CATALOG_DB_ADMIN_PASSWORD}
+      POSTGRES_CATALOG_DATA_PASSWORD: ${CATALOG_DB_PASSWORD}
     volumes:
       - postgres-data:/var/lib/postgresql/data
       - ./postgres-init.sh:/docker-entrypoint-initdb.d/init.sh
@@ -73,9 +78,8 @@ services:
   #   8085 = catalog
 
   users:
-    build:
-      context: ../../users
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-users:latest
+
     container_name: fakestore-users
     ports:
       - "8081:8080"
@@ -87,15 +91,14 @@ services:
       SPRING_PROFILES_ACTIVE: ""
       DB_HOST: postgres
       DB_USER: fakestore_users_user
-      DB_PASSWORD: localpassword
-      DB_ADMIN_USER: fakestore_admin
-      DB_ADMIN_PASSWORD: localadminpassword
-      JWT_SECRET: local-dev-secret-min-32-chars-long!!
+      DB_PASSWORD: ${USERS_DB_PASSWORD}
+      DB_ADMIN_USER: fakestore_users_admin
+      DB_ADMIN_PASSWORD: ${USERS_DB_ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
 
   payments:
-    build:
-      context: ../../payments
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-payments:latest
+
     container_name: fakestore-payments
     ports:
       - "8082:8080"
@@ -106,12 +109,11 @@ services:
       SERVER_PORT: 8080
       SPRING_PROFILES_ACTIVE: ""
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      JWT_SECRET: local-dev-secret-min-32-chars-long!!
+      JWT_SECRET: ${JWT_SECRET}
 
   orders:
-    build:
-      context: ../../orders
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-orders:latest
+
     container_name: fakestore-orders
     ports:
       - "8083:8080"
@@ -127,15 +129,14 @@ services:
       DB_HOST: postgres
       DB_NAME: fakestore_orders
       DB_USER: fakestore_orders_user
-      DB_PASSWORD: localpassword
-      DB_ADMIN_USER: fakestore_admin
-      DB_ADMIN_PASSWORD: localadminpassword
-      JWT_SECRET: local-dev-secret-min-32-chars-long!!
+      DB_PASSWORD: ${ORDERS_DB_PASSWORD}
+      DB_ADMIN_USER: fakestore_orders_admin
+      DB_ADMIN_PASSWORD: ${ORDERS_DB_ADMIN_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET}
 
   shipping:
-    build:
-      context: ../../shipping
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-shipping:latest
+
     container_name: fakestore-shipping
     ports:
       - "8084:8080"
@@ -145,12 +146,11 @@ services:
     environment:
       ASPNETCORE_URLS: http://+:8080
       KAFKA__BOOTSTRAPSERVERS: kafka:9092
-      JWT__SECRET: local-dev-secret-min-32-chars-long!!
+      JWT__SECRET: ${JWT_SECRET}
 
   catalog:
-    build:
-      context: ../../catalog
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-catalog:latest
+
     container_name: fakestore-catalog
     ports:
       - "8085:8080"
@@ -162,19 +162,18 @@ services:
       DB_HOST: postgres
       DB_NAME: fakestore_catalog
       DB_USER: fakestore_catalog_app
-      DB_PASSWORD: localpassword
-      DB_ADMIN_USER: fakestore_admin
-      DB_ADMIN_PASSWORD: localadminpassword
+      DB_PASSWORD: ${CATALOG_DB_PASSWORD}
+      DB_ADMIN_USER: fakestore_catalog_admin
+      DB_ADMIN_PASSWORD: ${CATALOG_DB_ADMIN_PASSWORD}
     volumes:
       - catalog-images:/app/images
 
   website:
-    build:
-      context: ../../website
-      dockerfile: Dockerfile
+    image: ghcr.io/fake-store/fakestore-website:latest
+
     container_name: fakestore-website
     ports:
-      - "8080:8080"
+      - "80:8080"
     depends_on:
       - users
       - payments
@@ -188,7 +187,7 @@ services:
       ORDERS_SERVICE_URL: http://host.docker.internal:8083
       SHIPPING_SERVICE_URL: http://host.docker.internal:8084
       CATALOG_SERVICE_URL: http://host.docker.internal:8085
-      JWT_SECRET: local-dev-secret-min-32-chars-long!!
+      JWT_SECRET: ${JWT_SECRET}
 
 volumes:
   postgres-data:

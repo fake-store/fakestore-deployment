@@ -1,11 +1,18 @@
 #!/bin/bash
 # Usage:
 #   ./start.sh          — start everything; skips services whose port is already in use
-#   ./start.sh build    — (re)build all images then start
+#   ./start.sh pull     — pull latest images then start
 #   ./start.sh infra    — infrastructure only (Postgres + Kafka) for IDE dev
 set -e
 
 cd "$(dirname "$0")"
+
+if [[ ! -f .env ]]; then
+  cp .env.example .env
+  echo "No .env found — created one from .env.example."
+  echo "Fill in the values in deployment/localdev/.env, then re-run."
+  exit 1
+fi
 
 SERVICES=(users payments orders shipping catalog website)
 
@@ -29,7 +36,7 @@ start_service() {
 
 print_urls() {
   echo ""
-  echo "  website     -> http://localhost:8080"
+  echo "  website     -> http://localhost"
   echo "  users       -> http://localhost:8081"
   echo "  payments    -> http://localhost:8082"
   echo "  orders      -> http://localhost:8083"
@@ -41,20 +48,20 @@ print_urls() {
 if [ "${1:-}" = "infra" ]; then
   start_infra
   echo "Infrastructure running:"
-  echo "  PostgreSQL  -> localhost:5432  (admin: fakestore_admin / localadminpassword)"
+  echo "  PostgreSQL  -> localhost:5432  (admin: fakestore_admin)"
   echo "  Kafka       -> localhost:9091"
   echo "  Kafka UI    -> http://localhost:9094"
   echo ""
   echo "Run services in your IDE on:"
-  echo "  website     -> http://localhost:8080"
+  echo "  website     -> http://localhost"
   echo "  users       -> http://localhost:8081"
   echo "  payments    -> http://localhost:8082"
   echo "  orders      -> http://localhost:8083"
   echo "  shipping    -> http://localhost:8084"
   echo "  catalog     -> http://localhost:8085"
 
-elif [ "${1:-}" = "build" ]; then
-  docker compose build
+elif [ "${1:-}" = "pull" ]; then
+  docker compose pull
   start_infra
   echo "Starting services:"
   for svc in "${SERVICES[@]}"; do
