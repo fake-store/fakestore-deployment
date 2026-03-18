@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: payments
-          image: ghcr.io/fake-store/fakestore-payments:sha-d2b4007
+          image: ghcr.io/fake-store/fakestore-payments:${PAYMENTS_TAG}
           ports:
             - containerPort: 8080
           envFrom:

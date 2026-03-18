@@ -28,7 +28,7 @@ spec:
     spec:
       containers:
         - name: notifications
-          image: ghcr.io/fake-store/fakestore-notifications:sha-a946871
+          image: ghcr.io/fake-store/fakestore-notifications:${NOTIFICATIONS_TAG}
           envFrom:
             - configMapRef:
                 name: notifications-config

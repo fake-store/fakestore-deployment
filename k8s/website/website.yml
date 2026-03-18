@@ -29,7 +29,7 @@ spec:
     spec:
       containers:
         - name: website
-          image: ghcr.io/fake-store/fakestore-website:sha-bd1e0cc
+          image: ghcr.io/fake-store/fakestore-website:${WEBSITE_TAG}
           ports:
             - containerPort: 8080
           envFrom:

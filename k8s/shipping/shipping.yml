@@ -26,7 +26,7 @@ spec:
     spec:
       containers:
         - name: shipping
-          image: ghcr.io/fake-store/fakestore-shipping:sha-48a468e
+          image: ghcr.io/fake-store/fakestore-shipping:${SHIPPING_TAG}
           ports:
             - containerPort: 8080
           envFrom:

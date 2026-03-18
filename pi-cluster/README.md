@@ -21,6 +21,7 @@ This directory contains all scripts to flash SD cards, initialise the cluster, a
 - macOS (`flash_sd.sh` uses `hdiutil`, `diskutil`, `/dev/rdisk`)
 - `ansible` and `ansible-playbook` on PATH
 - `kubectl` on PATH
+- `envsubst` on PATH — install via `brew install gettext`
 - SD cards and a USB adapter
 
 ---
@@ -91,11 +92,26 @@ Exits early with next-step instructions if the cluster is already running.
 ## 4) Deploy fakestore
 
 ```bash
-./deploy-fakestore.sh
+./deploy-fakestore.sh        # list available releases
+./deploy-fakestore.sh 1      # deploy a specific release
 ```
 
-Creates the namespace, applies secrets, and deploys all services.
-Safe to re-run — all steps are idempotent.
+Run with no args to pull the latest release manifest and see what's available:
+
+```
+Recent releases:
+  v1     payments:v1  users:v1  website:v1  orders:v1  shipping:v1  notifications:v1
+  v2     payments:v2  users:v1  website:v1  orders:v1  shipping:v1  notifications:v1
+
+To deploy:   ./deploy-fakestore.sh 2
+To rollback: ./deploy-fakestore.sh 1
+```
+
+Releases are cut automatically when a service merges to main — the deployment repo
+manifest is updated by CI with no manual steps required.
+
+Each release is a snapshot in `../releases/vN.yml`. Only services whose image tag
+changed from the previous deploy will be restarted; others are untouched.
 
 ---
 
