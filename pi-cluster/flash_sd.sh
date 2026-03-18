@@ -48,7 +48,6 @@ check_image() {
 prepare_tmp_image() {
   info "prepare image"
   mkdir -p /tmp/pi-cluster
-  chmod 777 /tmp/pi-cluster
   if [ ! -f "$TMP_IMAGE" ]; then
     detail "copying image to $TMP_IMAGE"
     cp "$PI_IMAGE" "$TMP_IMAGE"

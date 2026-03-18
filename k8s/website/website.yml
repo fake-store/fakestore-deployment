@@ -35,6 +35,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: website-config
+            - secretRef:
+                name: website-secret
           readinessProbe:
             httpGet:
               path: /login

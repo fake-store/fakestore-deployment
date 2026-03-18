@@ -1,12 +1,13 @@
 ---
-- name: Cluster setup - common prerequisites for all nodes
+# ── Play 1: Common prerequisites for all nodes ────────────────────────────────
+- name: Cluster setup - common prerequisites
   hosts: pis
   become: yes
   gather_facts: yes
   vars:
     k3s_version: "v1.29.0+k3s1"
     k3s_install_url: "https://get.k3s.io"
-    cluster_tmp_dir: "{{ playbook_dir }}/tmp"
+    cluster_tmp_dir: "{{ playbook_dir }}/.log"
   tasks:
     - name: Ensure local tmp directory exists
       delegate_to: localhost
@@ -112,14 +113,15 @@
         state: restarted
         enabled: yes
 
-- name: Cluster setup - install and initialize k3s server(s)
-  hosts: pi1
+# ── Play 2: Install k3s server on pi3 ────────────────────────────────────────
+- name: Cluster setup - install and initialize k3s server
+  hosts: pi3
   become: yes
+  gather_facts: yes
   vars:
     k3s_version: "v1.29.0+k3s1"
     k3s_install_url: "https://get.k3s.io"
-    cluster_tmp_dir: "{{ playbook_dir }}/tmp"
-  gather_facts: yes
+    cluster_tmp_dir: "{{ playbook_dir }}/.log"
   tasks:
     - name: Ensure local per-host tmp directory exists
       delegate_to: localhost
@@ -130,10 +132,9 @@
         state: directory
         mode: '0750'
 
-    - name: Ensure iptables tools are installed (needed by k3s)
+    - name: Ensure iptables tools are installed
       apt:
-        name:
-          - iptables
+        name: iptables
         state: present
         update_cache: yes
 
@@ -157,13 +158,13 @@
         fi
       register: cmdline_change
 
-    - name: Reboot Pi if cmdline was modified to enable memory cgroup
+    - name: Reboot if cmdline was modified
       when: "'changed' in cmdline_change.stdout"
       reboot:
         reboot_timeout: 300
         test_command: whoami
 
-    - name: Update apt cache on server after reboot (ensure packages available)
+    - name: Update apt cache after reboot
       apt:
         update_cache: yes
         cache_valid_time: 3600
@@ -195,15 +196,8 @@
 
     - name: Fail if k3s did not start
       fail:
-        msg: "k3s failed to start on server. See journal output: {{ k3s_journal.stdout }}"
+        msg: "k3s failed to start. See: {{ cluster_tmp_dir }}/{{ inventory_hostname }}/k3s-journal.txt"
       when: k3s_status.stdout.strip() != 'active'
-
-    - name: Wait for Kubernetes API
-      become_user: root
-      shell: |
-        kubectl wait --for=condition=Available --timeout=120s deployment/kube-apiserver -n kube-system 2>/dev/null || true
-      register: wait_api
-      failed_when: false
 
     - name: Wait for k3s node-token to exist
       wait_for:
@@ -211,41 +205,32 @@
         timeout: 120
         state: present
 
-    - name: Get join token for k3s
+    - name: Get join token
       shell: cat /var/lib/rancher/k3s/server/node-token
       register: k3s_token
       changed_when: false
 
-    - name: Publish join info as k3s_master host
+    - name: Publish join info for workers
       add_host:
         name: k3s_master
         groups: k3s_meta
         k3s_server_url: "https://{{ hostvars[inventory_hostname].get('ansible_host', ansible_default_ipv4.address) }}:6443"
         k3s_token: "{{ k3s_token.stdout }}"
 
-- name: Cluster setup - join workers to k3s server
+# ── Play 3: Join workers ──────────────────────────────────────────────────────
+- name: Cluster setup - join workers
   hosts: pis
   become: yes
+  gather_facts: yes
   vars:
     k3s_version: "v1.29.0+k3s1"
     k3s_install_url: "https://get.k3s.io"
-    cluster_tmp_dir: "{{ playbook_dir }}/tmp"
-  gather_facts: yes
+    cluster_tmp_dir: "{{ playbook_dir }}/.log"
   tasks:
-    - name: Wait for server facts to be available
-      pause:
-        seconds: 5
-      when: hostvars[inventory_hostname].get('role', '') == 'worker'
-
     - name: Find the server host
       when: hostvars[inventory_hostname].get('role', '') == 'worker'
       set_fact:
         the_server: "{{ hostvars['k3s_master'] }}"
-
-    - name: Debug server info
-      when: hostvars[inventory_hostname].get('role', '') == 'worker'
-      debug:
-        msg: "Server URL: {{ the_server.k3s_server_url }} token present: {{ the_server.k3s_token is defined }}"
 
     - name: Ensure memory cgroup is enabled on worker cmdline
       when: hostvars[inventory_hostname].get('role', '') == 'worker'
@@ -268,7 +253,7 @@
         fi
       register: cmdline_change_worker
 
-    - name: Reboot worker if cmdline was modified to enable memory cgroup
+    - name: Reboot worker if cmdline was modified
       when: hostvars[inventory_hostname].get('role', '') == 'worker' and "'changed' in cmdline_change_worker.stdout"
       reboot:
         reboot_timeout: 600
@@ -283,12 +268,6 @@
       wait_for_connection:
         timeout: 600
         delay: 5
-      register: wait_conn_result
-
-    - name: Fail if worker did not come back after reboot
-      when: hostvars[inventory_hostname].get('role', '') == 'worker' and "'changed' in cmdline_change_worker.stdout" and (wait_conn_result is not defined or wait_conn_result is failed)
-      fail:
-        msg: "Host {{ inventory_hostname }} ({{ ansible_host | default(inventory_hostname) }}) did not become reachable over SSH after reboot; check network and power. Collected diagnostics are under {{ cluster_tmp_dir }}/{{ inventory_hostname }} or run the diag playbook."
 
     - name: Update apt cache on worker after reboot
       when: hostvars[inventory_hostname].get('role', '') == 'worker'
@@ -303,3 +282,79 @@
       args:
         creates: /var/lib/rancher/k3s/agent
 
+# ── Play 4: Configure SATA storage on pi3 ────────────────────────────────────
+- name: Cluster setup - configure SATA storage
+  hosts: pi3
+  become: yes
+  gather_facts: yes
+  vars:
+    sata_device: /dev/sda1
+    mount_point: /mnt/sata
+    postgres_uid: 999
+    postgres_gid: 999
+  tasks:
+    - name: Install e2fsprogs
+      apt:
+        name: e2fsprogs
+        state: present
+        update_cache: yes
+
+    - name: Check if SATA device exists
+      stat:
+        path: "{{ sata_device }}"
+      register: sata_dev
+
+    - name: Fail if SATA device not found
+      fail:
+        msg: "SATA device {{ sata_device }} not found. Check drive is connected."
+      when: not sata_dev.stat.exists
+
+    - name: Check if device already has a filesystem
+      command: blkid -s TYPE -o value {{ sata_device }}
+      register: existing_fs
+      changed_when: false
+      failed_when: false
+
+    - name: Format as ext4 if no filesystem present
+      command: mkfs.ext4 -L fakestore-data {{ sata_device }}
+      when: existing_fs.stdout == ""
+
+    - name: Ensure mount point exists
+      file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Get device UUID
+      command: blkid -s UUID -o value {{ sata_device }}
+      register: device_uuid
+      changed_when: false
+
+    - name: Add fstab entry for persistent mount
+      lineinfile:
+        path: /etc/fstab
+        line: "UUID={{ device_uuid.stdout }} {{ mount_point }} ext4 defaults,noatime 0 2"
+        regexp: "^UUID={{ device_uuid.stdout }}"
+        state: present
+
+    - name: Mount the drive
+      mount:
+        path: "{{ mount_point }}"
+        src: "UUID={{ device_uuid.stdout }}"
+        fstype: ext4
+        opts: defaults,noatime
+        state: mounted
+
+    - name: Create postgres data directory
+      file:
+        path: "{{ mount_point }}/data/postgres"
+        state: directory
+        owner: "{{ postgres_uid }}"
+        group: "{{ postgres_gid }}"
+        mode: '0750'
+
+    - name: Create catalog images directory
+      file:
+        path: "{{ mount_point }}/data/catalog-images"
+        state: directory
+        mode: '0755'
