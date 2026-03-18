@@ -69,6 +69,7 @@ services:
   #   8081 = users
   #   8082 = payments
   #   8083 = orders
+  #   8085 = catalog
 
   users:
     build:
@@ -122,6 +123,27 @@ services:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       JWT_SECRET: local-dev-secret-min-32-chars-long!!
 
+  catalog:
+    build:
+      context: ../../catalog
+      dockerfile: Dockerfile
+    container_name: fakestore-catalog
+    ports:
+      - "8085:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 8080
+      DB_HOST: postgres
+      DB_NAME: fakestore_catalog
+      DB_USER: fakestore_catalog_app
+      DB_PASSWORD: localpassword
+      DB_ADMIN_USER: fakestore_admin
+      DB_ADMIN_PASSWORD: localadminpassword
+    volumes:
+      - catalog-images:/app/images
+
   website:
     build:
       context: ../../website
@@ -133,11 +155,15 @@ services:
       - users
       - payments
       - orders
+      - catalog
     environment:
       SPRING_PROFILES_ACTIVE: ""
       USERS_SERVICE_URL: http://host.docker.internal:8081
       PAYMENTS_SERVICE_URL: http://host.docker.internal:8082
       ORDERS_SERVICE_URL: http://host.docker.internal:8083
+      SHIPPING_SERVICE_URL: http://host.docker.internal:8084
+      CATALOG_SERVICE_URL: http://host.docker.internal:8085
 
 volumes:
   postgres-data:
+  catalog-images:

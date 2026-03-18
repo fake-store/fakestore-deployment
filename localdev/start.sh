@@ -19,6 +19,7 @@ if [ "${1}" = "infra" ]; then
   echo "  users       -> http://localhost:8081"
   echo "  payments    -> http://localhost:8082"
   echo "  orders      -> http://localhost:8083"
+  echo "  catalog     -> http://localhost:8085"
 elif [ "${1}" = "build" ]; then
   docker compose build
   docker compose up -d
@@ -27,6 +28,7 @@ elif [ "${1}" = "build" ]; then
   echo "  users       -> http://localhost:8081"
   echo "  payments    -> http://localhost:8082"
   echo "  orders      -> http://localhost:8083"
+  echo "  catalog     -> http://localhost:8085"
   echo "  Kafka UI    -> http://localhost:9094"
   echo ""
   echo "To develop a service in your IDE:"
@@ -39,6 +41,7 @@ else
   echo "  users       -> http://localhost:8081"
   echo "  payments    -> http://localhost:8082"
   echo "  orders      -> http://localhost:8083"
+  echo "  catalog     -> http://localhost:8085"
   echo "  Kafka UI    -> http://localhost:9094"
   echo ""
   echo "To develop a service in your IDE:"

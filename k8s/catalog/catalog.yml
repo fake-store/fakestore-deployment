@@ -1,0 +1,84 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: catalog-config
+  namespace: fakestore
+data:
+  DB_HOST: "postgres-0.postgres.fakestore.svc.cluster.local"
+  DB_NAME: "fakestore_catalog"
+  DB_USER: "fakestore_catalog_app"
+  DB_ADMIN_USER: "fakestore_admin"
+  PORT: "8080"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: catalog-images-pvc
+  namespace: fakestore
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  namespace: fakestore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog
+  template:
+    metadata:
+      labels:
+        app: catalog
+    spec:
+      containers:
+        - name: catalog
+          image: ghcr.io/fake-store/fakestore-catalog:latest
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: catalog-config
+            - secretRef:
+                name: catalog-secret
+          volumeMounts:
+            - name: images
+              mountPath: /app/images
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+      volumes:
+        - name: images
+          persistentVolumeClaim:
+            claimName: catalog-images-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-service
+  namespace: fakestore
+spec:
+  selector:
+    app: catalog
+  ports:
+    - port: 8080
+      targetPort: 8080
+  type: ClusterIP
