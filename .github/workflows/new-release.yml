@@ -1,0 +1,70 @@
+name: New Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: "Service (payments | users | website | orders | shipping | notifications)"
+        required: true
+      tag:
+        description: "Image tag (e.g. sha-abc1234)"
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update manifest and cut release
+        env:
+          SERVICE: ${{ github.event.inputs.service }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          python3 - <<'PYEOF'
+          import yaml, os, glob
+          service = os.environ["SERVICE"]
+          tag     = os.environ["TAG"]
+
+          release_files = glob.glob("releases/v*.yml")
+          if not release_files:
+              raise FileNotFoundError("No release files found in releases/")
+          current_file = max(release_files, key=lambda f: int(f.split("v")[1].split(".")[0]))
+
+          with open(current_file) as f:
+              data = yaml.safe_load(f)
+
+          if service not in data["services"]:
+              raise ValueError(f"Unknown service: {service}")
+
+          data["services"][service]["version"] += 1
+          data["services"][service]["tag"]      = tag
+          data["version"] += 1
+
+          new_version = data["version"]
+          svc_version = data["services"][service]["version"]
+
+          with open(f"releases/v{new_version}.yml", "w") as f:
+              f.write(f"version: {new_version}\n")
+              f.write("services:\n")
+              for svc, info in data["services"].items():
+                  f.write(f"  {svc}:\n")
+                  f.write(f"    version: {info['version']}\n")
+                  f.write(f"    tag: {info['tag']}\n")
+
+          with open(os.environ["GITHUB_ENV"], "a") as f:
+              f.write(f"NEW_VERSION={new_version}\n")
+              f.write(f"SVC_VERSION={svc_version}\n")
+          PYEOF
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases/
+          git commit -m "${{ github.event.inputs.service }} ${{ github.event.inputs.tag }} → v${NEW_VERSION}"
+          git push

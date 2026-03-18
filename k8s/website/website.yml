@@ -30,12 +30,14 @@ spec:
     spec:
       containers:
         - name: website
-          image: ghcr.io/fake-store/fakestore-website:sha-77de335
+          image: ghcr.io/fake-store/fakestore-website:${WEBSITE_TAG}
           ports:
             - containerPort: 8080
           envFrom:
             - configMapRef:
                 name: website-config
+            - secretRef:
+                name: website-secret
           readinessProbe:
             httpGet:
               path: /login

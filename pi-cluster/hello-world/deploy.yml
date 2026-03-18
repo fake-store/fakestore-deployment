@@ -1,0 +1,63 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello-world
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-world
+  namespace: hello-world
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: hello-world
+  template:
+    metadata:
+      labels:
+        app: hello-world
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: hello-world
+      containers:
+        - name: hello
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /www &&
+              echo "pod=${POD_NAME} node=${NODE_NAME}" > /www/index.html &&
+              httpd -f -p 8080 -h /www
+          ports:
+            - containerPort: 8080
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-world
+  namespace: hello-world
+spec:
+  selector:
+    app: hello-world
+  ports:
+    - port: 80
+      targetPort: 8080
