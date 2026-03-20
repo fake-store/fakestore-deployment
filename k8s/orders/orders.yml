@@ -8,6 +8,10 @@ data:
   KAFKA_BOOTSTRAP_SERVERS: "kafka-0.kafka.fakestore.svc.cluster.local:9092"
   SPRING_PROFILES_ACTIVE: "k8s"
   SERVER_PORT: "8080"
+  DB_HOST: "postgres"
+  DB_NAME: "fakestore_orders"
+  DB_USER: "fakestore_orders_user"
+  DB_ADMIN_USER: "fakestore_orders_admin"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -32,6 +36,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: orders-config
+            - secretRef:
+                name: orders-secret
           readinessProbe:
             httpGet:
               path: /actuator/health

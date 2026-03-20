@@ -5,10 +5,10 @@ metadata:
   name: catalog-config
   namespace: fakestore
 data:
-  DB_HOST: "postgres-0.postgres.fakestore.svc.cluster.local"
+  DB_HOST: "postgres"
   DB_NAME: "fakestore_catalog"
   DB_USER: "fakestore_catalog_app"
-  DB_ADMIN_USER: "fakestore_admin"
+  DB_ADMIN_USER: "fakestore_catalog_admin"
   PORT: "8080"
 ---
 apiVersion: v1
@@ -41,7 +41,7 @@ spec:
     spec:
       containers:
         - name: catalog
-          image: ghcr.io/fake-store/fakestore-catalog:latest
+          image: ghcr.io/fake-store/fakestore-catalog:${CATALOG_TAG}
           ports:
             - containerPort: 8080
           envFrom:

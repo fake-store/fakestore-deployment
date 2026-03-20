@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       service:
-        description: "Service (payments | users | website | orders | shipping | notifications)"
+        description: "Service (payments | users | website | orders | shipping | notifications | catalog)"
         required: true
       tag:
         description: "Image tag (e.g. sha-abc1234)"

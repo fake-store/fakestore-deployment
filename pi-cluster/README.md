@@ -35,6 +35,8 @@ This directory contains all scripts to flash SD cards, initialise the cluster, a
 | `deploy-fakestore.sh` | Deploy the app: namespace + secrets + all services. Safe to re-run. |
 | `fetch-kubeconfig.sh` | Fetch kubeconfig from pi3 and install to `~/.kube/config` |
 | `apply-secrets.sh` | Apply secrets from `secrets.env` (called by deploy-fakestore, useful standalone) |
+| `bootstrap-db.sh` | Create service databases, DDL accounts, and app users in Postgres. Run once after first deploy, or after wiping Postgres. Safe to re-run — idempotent. |
+| `deploy-monitoring.sh` | Deploy Loki + Grafana + Promtail via Helm. Optional. Pass `--teardown` to remove. |
 | `diag.sh` | Run diagnostics playbook, collect logs |
 | `inventory.ini` | Ansible inventory (hostnames, IPs, roles) |
 | `ansible.cfg` | Ansible config (`host_key_checking = False`) |
@@ -104,7 +106,7 @@ Recent releases:
   v2     payments:v2  users:v1  website:v1  orders:v1  shipping:v1  notifications:v1
 
 To deploy:   ./deploy-fakestore.sh 2
-To rollback: ./deploy-fakestore.sh 1
+To rollback: ./deploy-fakestore.sh 1   # ** see Rollback section
 ```
 
 Releases are cut automatically when a service merges to main — the deployment repo
@@ -112,6 +114,38 @@ manifest is updated by CI with no manual steps required.
 
 Each release is a snapshot in `../releases/vN.yml`. Only services whose image tag
 changed from the previous deploy will be restarted; others are untouched.
+
+## 5) Bootstrap databases
+
+Run once after first deploy, or any time Postgres data is wiped:
+
+```bash
+./bootstrap-db.sh
+```
+
+Creates each service database, its DDL account (used by Flyway), and its app account (used by
+the running service). Safe to re-run — skips anything that already exists.
+
+Services will be in `CrashLoopBackOff` until this completes. They recover automatically on the
+next retry once the databases and accounts are in place.
+
+## 6) Monitoring — optional (Loki + Grafana)
+
+If Helm and a Grafana dashboard are desired:
+
+```bash
+# Requires: GRAFANA_PASSWORD set in secrets.env, helm on PATH
+./deploy-monitoring.sh
+```
+
+Deploys Loki (log aggregation), Grafana (UI), and Promtail (log collector DaemonSet on every node).
+All pod logs are shipped automatically — no per-service configuration needed.
+
+Grafana is available at **http://192.168.0.163:30030** (user: `admin`).
+
+```bash
+./deploy-monitoring.sh --teardown   # remove monitoring stack and storage
+```
 
 ---
 
@@ -122,6 +156,41 @@ changed from the previous deploy will be restarted; others are untouched.
 ./apply-secrets.sh     # Re-apply secrets (e.g. after rotating a value)
 ./diag.sh              # Cluster status and pod placement
 ```
+
+---
+
+## Runbooks
+
+### Rotating a database password
+
+1. Update the password in `secrets.env`
+2. Run `apply-secrets.sh` to push the new value into the k8s secret
+3. Run `bootstrap-db.sh` — it always syncs passwords via `ALTER USER`, so postgres is updated automatically
+4. Restart the affected service pod to pick up the new secret:
+   ```bash
+   kubectl rollout restart deployment/<service> -n fakestore
+   ```
+
+`bootstrap-db.sh` is safe to re-run at any time. It will not touch databases or users that don't need changes, except to sync passwords.
+
+---
+
+### Adding a new service with a database
+
+1. **`secrets.env`** — add `<SERVICE>_DB_ADMIN_PASSWORD` and `<SERVICE>_DB_PASSWORD`
+2. **`apply-secrets.sh`** — add a `patch_secret "<service>-secret"` block with the DB passwords (and any other secrets the service needs, e.g. `JWT_SECRET`)
+3. **`bootstrap-db.sh`** — add a `bootstrap` call for the new database
+4. **`deployment/k8s/<service>/`** — add k8s manifests; `DB_ADMIN_USER` and `DB_USER` in the ConfigMap must match the account names used in `bootstrap-db.sh`
+5. **`deploy-fakestore.sh`** — add `export <SERVICE>_TAG`, include it in the envsubst list, and add an `apply_versioned` call
+6. **`releases/`** — the new service will appear in the next release cut by CI
+
+Deploy order:
+```bash
+./deploy-fakestore.sh <N>   # deploys namespace, secrets, and all services
+./bootstrap-db.sh           # creates the new DB and accounts
+```
+
+Services crash-loop until bootstrap completes — this is expected.
 
 ---
 
@@ -150,3 +219,31 @@ All scripts write to `.log/` in the `pi-cluster/` directory:
 - `.log/apply-secrets.log`
 - `.log/deploy-fakestore.log`
 - `.log/diag.log`
+
+---
+
+## Rollback
+
+Rolling back redeploys an older release:
+
+```bash
+./deploy-fakestore.sh 1   # deploy release 1
+```
+
+**Rollback only affects service images — not the database.**
+
+Flyway migrations are applied on startup and are not reversible by rolling back the app image.
+If a release includes database migrations, the older image will start, Flyway will detect that the
+schema is ahead of its migration scripts, and the service will refuse to start.
+
+The safe release strategy is to decouple schema changes from application changes:
+
+1. **Release the schema change first** — deploy a migration-only release (or a release where the
+   app is backwards-compatible with both the old and new schema).
+2. **Release the application change second** — once the schema is stable.
+
+If a rollback is needed after step 2 only (no schema change was involved), the older image is
+fully compatible with the current database and the rollback is safe.
+
+If a schema change was already applied and the rollback is unavoidable, the database must be
+manually rolled back as well — there is no automated path for this.

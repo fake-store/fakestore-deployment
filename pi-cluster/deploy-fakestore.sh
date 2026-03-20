@@ -23,12 +23,15 @@ mkdir -p "$LOG_DIR"
 
 if [[ $# -eq 0 ]]; then
   echo "Fetching latest releases..."
-  git -C "$SCRIPT_DIR/.." pull --quiet --ff-only 2>/dev/null || \
-    echo "  (could not pull — showing local releases)"
+  git -C "$SCRIPT_DIR/.." fetch --quiet || \
+    echo "  (could not fetch — showing local releases)"
+  git -C "$SCRIPT_DIR/.." fetch origin main:main --update-head-ok 2>/dev/null || \
+    echo "  (could not fast-forward main — showing local releases)"
   echo
 
   release_files=$(
-    ls "$RELEASES_DIR"/v*.yml 2>/dev/null |
+    git -C "$SCRIPT_DIR/.." ls-tree --name-only main releases/ 2>/dev/null |
+    grep '^releases/v[0-9]*\.yml$' |
     sed 's/.*v\([0-9]*\)\.yml/\1 &/' |
     sort -n |
     awk '{print $2}' |
@@ -36,18 +39,19 @@ if [[ $# -eq 0 ]]; then
   )
 
   if [[ -z "$release_files" ]]; then
-    echo "No releases found in $RELEASES_DIR"
+    echo "No releases found on main"
     exit 1
   fi
 
   echo "Recent releases:"
   echo
-  while IFS= read -r file; do
-    ver=$(grep "^version:" "$file" | awk '{print $2}')
-    services=$(awk '
+  while IFS= read -r gitpath; do
+    content=$(git -C "$SCRIPT_DIR/.." show "main:$gitpath")
+    ver=$(echo "$content" | grep "^version:" | awk '{print $2}')
+    services=$(echo "$content" | awk '
       /^  [a-z]/ { svc = $1; gsub(/:/, "", svc) }
       /^    version:/ { printf "  %s:v%s", svc, $2 }
-    ' "$file")
+    ')
     printf "  v%-4s %s\n" "$ver" "$services"
   done <<< "$release_files"
 
@@ -87,6 +91,21 @@ export WEBSITE_TAG=$(get_tag "website")
 export ORDERS_TAG=$(get_tag "orders")
 export SHIPPING_TAG=$(get_tag "shipping")
 export NOTIFICATIONS_TAG=$(get_tag "notifications")
+export CATALOG_TAG=$(get_tag "catalog")
+
+MISSING_TAGS=()
+[[ -z "$PAYMENTS_TAG" ]]      && MISSING_TAGS+=("payments")
+[[ -z "$USERS_TAG" ]]         && MISSING_TAGS+=("users")
+[[ -z "$WEBSITE_TAG" ]]       && MISSING_TAGS+=("website")
+[[ -z "$ORDERS_TAG" ]]        && MISSING_TAGS+=("orders")
+[[ -z "$SHIPPING_TAG" ]]      && MISSING_TAGS+=("shipping")
+[[ -z "$NOTIFICATIONS_TAG" ]] && MISSING_TAGS+=("notifications")
+[[ -z "$CATALOG_TAG" ]]       && MISSING_TAGS+=("catalog")
+
+if [[ ${#MISSING_TAGS[@]} -gt 0 ]]; then
+  echo "ERROR: missing tags in release file for: ${MISSING_TAGS[*]}"
+  exit 1
+fi
 
 echo "Image tags:"
 echo "  payments:      $PAYMENTS_TAG"
@@ -95,6 +114,7 @@ echo "  website:       $WEBSITE_TAG"
 echo "  orders:        $ORDERS_TAG"
 echo "  shipping:      $SHIPPING_TAG"
 echo "  notifications: $NOTIFICATIONS_TAG"
+echo "  catalog:       $CATALOG_TAG"
 echo
 
 # ── Validate secrets.env ──────────────────────────────────────────────────────
@@ -114,10 +134,14 @@ MISSING=()
 [[ -z "${PG_ADMIN_PASSWORD:-}" ]]         && MISSING+=("PG_ADMIN_PASSWORD")
 [[ -z "${USERS_DB_ADMIN_PASSWORD:-}" ]]   && MISSING+=("USERS_DB_ADMIN_PASSWORD")
 [[ -z "${ORDERS_DB_ADMIN_PASSWORD:-}" ]]  && MISSING+=("ORDERS_DB_ADMIN_PASSWORD")
-[[ -z "${CATALOG_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("CATALOG_DB_ADMIN_PASSWORD")
-[[ -z "${USERS_DB_PASSWORD:-}" ]]         && MISSING+=("USERS_DB_PASSWORD")
-[[ -z "${ORDERS_DB_PASSWORD:-}" ]]        && MISSING+=("ORDERS_DB_PASSWORD")
-[[ -z "${CATALOG_DB_PASSWORD:-}" ]]       && MISSING+=("CATALOG_DB_PASSWORD")
+[[ -z "${CATALOG_DB_ADMIN_PASSWORD:-}" ]]  && MISSING+=("CATALOG_DB_ADMIN_PASSWORD")
+[[ -z "${PAYMENTS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("PAYMENTS_DB_ADMIN_PASSWORD")
+[[ -z "${SHIPPING_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("SHIPPING_DB_ADMIN_PASSWORD")
+[[ -z "${USERS_DB_PASSWORD:-}" ]]          && MISSING+=("USERS_DB_PASSWORD")
+[[ -z "${ORDERS_DB_PASSWORD:-}" ]]         && MISSING+=("ORDERS_DB_PASSWORD")
+[[ -z "${CATALOG_DB_PASSWORD:-}" ]]        && MISSING+=("CATALOG_DB_PASSWORD")
+[[ -z "${PAYMENTS_DB_PASSWORD:-}" ]]       && MISSING+=("PAYMENTS_DB_PASSWORD")
+[[ -z "${SHIPPING_DB_PASSWORD:-}" ]]       && MISSING+=("SHIPPING_DB_PASSWORD")
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "ERROR: fill in the following variables in secrets.env before running:"
@@ -153,7 +177,7 @@ apply() {
 apply_versioned() {
   local file="$1"
   echo "  applying: $file"
-  envsubst '${PAYMENTS_TAG} ${USERS_TAG} ${WEBSITE_TAG} ${ORDERS_TAG} ${SHIPPING_TAG} ${NOTIFICATIONS_TAG}' \
+  envsubst '${PAYMENTS_TAG} ${USERS_TAG} ${WEBSITE_TAG} ${ORDERS_TAG} ${SHIPPING_TAG} ${NOTIFICATIONS_TAG} ${CATALOG_TAG}' \
     < "$file" | kubectl apply -f -
   echo
 }
@@ -170,6 +194,11 @@ echo "--- Step 2/3: Secrets ---"
 
 echo "--- Step 3/3: Services ---"
 echo "[ storage (requires SSD on pi3) ]"
+echo "  ensuring data directories exist on pi3..."
+ssh -i ~/.ssh/pi_cluster_key -o StrictHostKeyChecking=accept-new \
+  "${PI_USER}@192.168.0.163" \
+  "sudo mkdir -p /mnt/sata/data/postgres /mnt/sata/data/catalog-images"
+echo
 apply "$K8S_DIR/storage.yml"
 
 echo "[ kafka ]"
@@ -192,6 +221,9 @@ apply_versioned "$K8S_DIR/shipping/shipping.yml"
 
 echo "[ notifications ]"
 apply_versioned "$K8S_DIR/notifications/notifications.yml"
+
+echo "[ catalog ]"
+apply_versioned "$K8S_DIR/catalog/catalog.yml"
 
 echo "[ website ]"
 apply_versioned "$K8S_DIR/website/website.yml"

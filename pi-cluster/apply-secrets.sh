@@ -31,9 +31,13 @@ MISSING=()
 [[ -z "${USERS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("USERS_DB_ADMIN_PASSWORD")
 [[ -z "${ORDERS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("ORDERS_DB_ADMIN_PASSWORD")
 [[ -z "${CATALOG_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("CATALOG_DB_ADMIN_PASSWORD")
-[[ -z "${USERS_DB_PASSWORD:-}" ]]       && MISSING+=("USERS_DB_PASSWORD")
-[[ -z "${ORDERS_DB_PASSWORD:-}" ]]      && MISSING+=("ORDERS_DB_PASSWORD")
-[[ -z "${CATALOG_DB_PASSWORD:-}" ]]     && MISSING+=("CATALOG_DB_PASSWORD")
+[[ -z "${USERS_DB_PASSWORD:-}" ]]         && MISSING+=("USERS_DB_PASSWORD")
+[[ -z "${ORDERS_DB_PASSWORD:-}" ]]        && MISSING+=("ORDERS_DB_PASSWORD")
+[[ -z "${CATALOG_DB_PASSWORD:-}" ]]       && MISSING+=("CATALOG_DB_PASSWORD")
+[[ -z "${PAYMENTS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("PAYMENTS_DB_ADMIN_PASSWORD")
+[[ -z "${PAYMENTS_DB_PASSWORD:-}" ]]      && MISSING+=("PAYMENTS_DB_PASSWORD")
+[[ -z "${SHIPPING_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("SHIPPING_DB_ADMIN_PASSWORD")
+[[ -z "${SHIPPING_DB_PASSWORD:-}" ]]      && MISSING+=("SHIPPING_DB_PASSWORD")
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "ERROR: fill in the following variables in secrets.env before running:"
@@ -71,13 +75,7 @@ echo "=== Fakestore Secrets ==="
 echo
 
 patch_secret "postgres-secret" \
-  "admin-password=$PG_ADMIN_PASSWORD" \
-  "users-admin-password=$USERS_DB_ADMIN_PASSWORD" \
-  "users-data-password=$USERS_DB_PASSWORD" \
-  "orders-admin-password=$ORDERS_DB_ADMIN_PASSWORD" \
-  "orders-data-password=$ORDERS_DB_PASSWORD" \
-  "catalog-admin-password=$CATALOG_DB_ADMIN_PASSWORD" \
-  "catalog-data-password=$CATALOG_DB_PASSWORD"
+  "admin-password=$PG_ADMIN_PASSWORD"
 echo "  [ok] postgres-secret"
 
 patch_secret "users-secret" \
@@ -93,7 +91,9 @@ patch_secret "orders-secret" \
 echo "  [ok] orders-secret"
 
 patch_secret "payments-secret" \
-  "JWT_SECRET=$JWT_SECRET"
+  "JWT_SECRET=$JWT_SECRET" \
+  "DB_PASSWORD=$PAYMENTS_DB_PASSWORD" \
+  "DB_ADMIN_PASSWORD=$PAYMENTS_DB_ADMIN_PASSWORD"
 echo "  [ok] payments-secret"
 
 patch_secret "website-secret" \
@@ -106,7 +106,9 @@ patch_secret "catalog-secret" \
 echo "  [ok] catalog-secret"
 
 patch_secret "shipping-secret" \
-  "JWT__SECRET=$JWT_SECRET"
+  "JWT__SECRET=$JWT_SECRET" \
+  "DB__PASSWORD=$SHIPPING_DB_PASSWORD" \
+  "DB__ADMIN__PASSWORD=$SHIPPING_DB_ADMIN_PASSWORD"
 echo "  [ok] shipping-secret"
 
 echo
