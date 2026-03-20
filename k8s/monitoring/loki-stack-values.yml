@@ -1,0 +1,45 @@
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    storageClassName: local-storage
+    size: 20Gi
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 300m
+
+promtail:
+  enabled: true
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+
+grafana:
+  enabled: true
+  adminPassword: "${GRAFANA_PASSWORD}"
+  service:
+    type: NodePort
+    nodePort: 30030
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Loki
+          type: loki
+          url: http://loki-stack:3100
+          isDefault: true
