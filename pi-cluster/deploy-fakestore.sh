@@ -63,14 +63,23 @@ fi
 exec > >(tee -a "$LOG") 2>&1
 
 VERSION_ARG="${1}"
-RELEASE_FILE="$RELEASES_DIR/v${VERSION_ARG}.yml"
+RELEASE_GITPATH="releases/v${VERSION_ARG}.yml"
 
-if [[ ! -f "$RELEASE_FILE" ]]; then
+# Fetch latest so we can read release files directly from git (avoids stale local files)
+git -C "$SCRIPT_DIR/.." fetch --quiet 2>/dev/null || true
+git -C "$SCRIPT_DIR/.." fetch origin main:main --update-head-ok 2>/dev/null || true
+
+RELEASE_CONTENT=$(git -C "$SCRIPT_DIR/.." show "main:$RELEASE_GITPATH" 2>/dev/null)
+if [[ -z "$RELEASE_CONTENT" ]]; then
   echo "ERROR: No release file found for version ${VERSION_ARG}"
-  echo "  Expected: $RELEASE_FILE"
+  echo "  Looked in git main:$RELEASE_GITPATH"
   echo "  Run ./deploy-fakestore.sh with no args to see available versions."
   exit 1
 fi
+
+RELEASE_FILE=$(mktemp)
+echo "$RELEASE_CONTENT" > "$RELEASE_FILE"
+trap 'rm -f "$RELEASE_FILE"' EXIT
 
 echo "Release: v${VERSION_ARG}"
 

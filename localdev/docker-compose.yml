@@ -78,7 +78,7 @@ services:
   #   8085 = catalog
 
   users:
-    image: ghcr.io/fake-store/fakestore-users:latest
+    image: ghcr.io/fake-store/fakestore-users:${USERS_TAG}
 
     container_name: fakestore-users
     ports:
@@ -97,7 +97,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
 
   payments:
-    image: ghcr.io/fake-store/fakestore-payments:latest
+    image: ghcr.io/fake-store/fakestore-payments:${PAYMENTS_TAG}
 
     container_name: fakestore-payments
     ports:
@@ -112,7 +112,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
 
   orders:
-    image: ghcr.io/fake-store/fakestore-orders:latest
+    image: ghcr.io/fake-store/fakestore-orders:${ORDERS_TAG}
 
     container_name: fakestore-orders
     ports:
@@ -135,7 +135,7 @@ services:
       JWT_SECRET: ${JWT_SECRET}
 
   shipping:
-    image: ghcr.io/fake-store/fakestore-shipping:latest
+    image: ghcr.io/fake-store/fakestore-shipping:${SHIPPING_TAG}
 
     container_name: fakestore-shipping
     ports:
@@ -149,7 +149,7 @@ services:
       JWT__SECRET: ${JWT_SECRET}
 
   catalog:
-    image: ghcr.io/fake-store/fakestore-catalog:latest
+    image: ghcr.io/fake-store/fakestore-catalog:${CATALOG_TAG}
 
     container_name: fakestore-catalog
     ports:
@@ -169,7 +169,7 @@ services:
       - catalog-images:/app/images
 
   website:
-    image: ghcr.io/fake-store/fakestore-website:latest
+    image: ghcr.io/fake-store/fakestore-website:${WEBSITE_TAG}
 
     container_name: fakestore-website
     ports:
