@@ -1,0 +1,20 @@
+version: 5
+services:
+  payments:
+    version: 1
+    tag: sha-d2b4007
+  users:
+    version: 2
+    tag: sha-bb235f0
+  website:
+    version: 3
+    tag: sha-b11c01b
+  orders:
+    version: 2
+    tag: sha-3f53d9e
+  shipping:
+    version: 1
+    tag: sha-48a468e
+  notifications:
+    version: 1
+    tag: sha-a946871
