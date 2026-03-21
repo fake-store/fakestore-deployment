@@ -1,4 +1,4 @@
-version: 4
+version: 6
 services:
   payments:
     version: 1
@@ -10,11 +10,14 @@ services:
     version: 3
     tag: sha-b11c01b
   orders:
-    version: 1
-    tag: sha-e7f04b9
+    version: 2
+    tag: sha-3f53d9e
   shipping:
     version: 1
     tag: sha-48a468e
   notifications:
     version: 1
     tag: sha-a946871
+  catalog:
+    version: 1
+    tag: sha-c395b01
