@@ -1,0 +1,16 @@
+# GCP override: website-service as LoadBalancer.
+# GKE will automatically provision a GCP HTTP load balancer and assign an external IP.
+# This replaces the ClusterIP service defined in k8s/website/website.yml.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: website-service
+  namespace: fakestore
+spec:
+  selector:
+    app: website
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: LoadBalancer
