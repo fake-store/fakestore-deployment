@@ -3,7 +3,7 @@ services:
   # ── Infrastructure ────────────────────────────────────────────────────────
 
   postgres:
-    image: postgres:16
+    image: postgres:17
     container_name: fakestore-postgres
     restart: always
     environment:
