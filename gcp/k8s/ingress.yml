@@ -1,0 +1,15 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fakestore-ingress
+  namespace: fakestore
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: fakestore-ip
+    networking.gke.io/managed-certificates: fakestore-cert
+spec:
+  ingressClassName: gce
+  defaultBackend:
+    service:
+      name: website-service
+      port:
+        number: 80

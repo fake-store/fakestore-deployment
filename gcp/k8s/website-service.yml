@@ -1,5 +1,5 @@
-# GCP override: website-service as LoadBalancer.
-# GKE will automatically provision a GCP HTTP load balancer and assign an external IP.
+# GCP override: website-service as NodePort for use with GKE Ingress.
+# TLS is terminated at the Ingress (managed-cert.yml + ingress.yml).
 # This replaces the ClusterIP service defined in k8s/website/website.yml.
 ---
 apiVersion: v1
@@ -13,4 +13,4 @@ spec:
   ports:
     - port: 80
       targetPort: 8080
-  type: LoadBalancer
+  type: NodePort

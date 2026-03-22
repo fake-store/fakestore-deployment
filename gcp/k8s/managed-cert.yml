@@ -1,0 +1,8 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: fakestore-cert
+  namespace: fakestore
+spec:
+  domains:
+    - fakestore.route36.com

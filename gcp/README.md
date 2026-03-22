@@ -1,5 +1,12 @@
 # GCP Deployment
 
+> **Note:** This deployment is not currently active. Fakestore migrated to a GCE VM
+> (Docker Compose + nginx) to reduce cost from ~$130/month to ~$16/month.
+> See [`../gce/`](../gce/) for the active deployment.
+>
+> This directory is retained as reference — the scripts and manifests are fully functional
+> and can be used to bring GKE back up at any time.
+
 Fakestore on **GKE Autopilot** — a fully managed Kubernetes cluster with no node provisioning required.
 This directory contains all scripts to create the cluster, apply secrets, and deploy services.
 
@@ -10,14 +17,19 @@ This directory contains all scripts to create the cluster, apply secrets, and de
 ```
 Internet
   │
-  └─► GCP HTTP(S) Load Balancer  (created automatically by GKE when website-service type=LoadBalancer)
+  └─► Global Static IP (fakestore-ip)
         │
-        └─► website-service  (LoadBalancer — only externally exposed service)
+        └─► GCP HTTP(S) Global Load Balancer  (provisioned by GKE Ingress)
+              │  TLS terminated here (Google-managed cert for fakestore.route36.com)
               │
-              ├─► users-service      (ClusterIP, internal only)
-              ├─► payments-service   (ClusterIP, internal only)
-              ├─► orders-service     (ClusterIP, internal only)
-              └─► ...
+              └─► website-service  (NodePort — only externally exposed service)
+                    │
+                    ├─► users-service         (ClusterIP, internal only)
+                    ├─► payments-service      (ClusterIP, internal only)
+                    ├─► orders-service        (ClusterIP, internal only)
+                    ├─► shipping-service      (ClusterIP, internal only)
+                    ├─► notifications-service (ClusterIP, internal only)
+                    └─► catalog-service       (ClusterIP, internal only)
 
 Cluster internals:
   kafka          — StatefulSet, ClusterIP headless, in-cluster message bus
@@ -39,14 +51,10 @@ Cluster internals:
 |--|--|--|
 | Cluster | k3s, self-managed | GKE Autopilot, fully managed |
 | Nodes | Raspberry Pi 4 (ARM64) | Google-managed (x86_64) |
-| Images | `linux/arm64` | `linux/amd64` — see note below |
-| Storage | `local-storage` (SSD on pi3) | `standard-rwo` (managed PD) |
-| External access | Traefik Ingress | GCP Load Balancer (type=LoadBalancer) |
-| Ingress | Traefik (k3s built-in) | GCP HTTP(S) LB (auto-provisioned) |
-
-> **⚠️ ARM64 vs AMD64:** The pi-cluster builds `linux/arm64` images. GKE Autopilot nodes are
-> `linux/amd64`. You will need to update the GitHub Actions build workflows to also push
-> `linux/amd64` images (either multi-arch or a separate tag). See **Image Architecture** below.
+| Images | `linux/arm64` | `linux/amd64` (multi-arch images work on both) |
+| Storage | `local-storage` (SSD on pi3) | `standard-rwo` (managed Persistent Disk) |
+| External access | Traefik Ingress | GKE Ingress + Global Load Balancer |
+| TLS | none | Google-managed certificate (auto-provisioned, auto-renewed) |
 
 ---
 
@@ -70,18 +78,18 @@ gcloud services enable container.googleapis.com \
   --project=YOUR_PROJECT_ID
 ```
 
-### 3. Reserve a static IP (optional but recommended)
+### 3. Reserve a global static IP
 
-If you want a stable external IP address that survives cluster teardowns:
+Required for HTTPS with a Google-managed certificate. Must be **global** (not regional).
 
 ```bash
 gcloud compute addresses create fakestore-ip \
-  --project=YOUR_PROJECT_ID \
-  --region=YOUR_REGION
+  --global \
+  --project=YOUR_PROJECT_ID
 ```
 
-Then add `fakestore-ip` to `GCP_STATIC_IP_NAME` in `secrets.env`.
-Leave `GCP_STATIC_IP_NAME` blank to use an ephemeral IP.
+Point your DNS A record at the resulting IP before deploying — GCP needs to verify domain
+ownership to provision the managed certificate.
 
 ### 4. GitHub Packages — make images public
 
@@ -138,7 +146,10 @@ envsubst --version
 | `diag.sh` | Show cluster health: nodes, pods, services. |
 | `secrets.env.example` | Template — copy to `secrets.env` and fill in. |
 | `k8s/postgres.yml` | GCP override: no nodeAffinity, `standard-rwo` StorageClass. |
-| `k8s/website-service.yml` | GCP override: website-service as `LoadBalancer` for external access. |
+| `k8s/catalog-images-pvc.yml` | GCP override: catalog image storage PVC, `standard-rwo` StorageClass. |
+| `k8s/website-service.yml` | GCP override: website-service as `NodePort` (required for GKE Ingress). |
+| `k8s/managed-cert.yml` | Google-managed TLS certificate for `fakestore.route36.com`. |
+| `k8s/ingress.yml` | GKE Ingress: binds global static IP, managed cert, routes traffic to website-service. |
 
 ---
 
@@ -216,6 +227,87 @@ a single image tag that works on both clusters.
 
 ---
 
+## GCP Components and Pricing
+
+All prices are approximate, based on us-central1. Verify current rates at
+[cloud.google.com/pricing](https://cloud.google.com/pricing).
+
+### GKE Autopilot
+The cluster itself — Google manages all nodes, scaling, and upgrades.
+
+| Charge | Rate | ~Monthly |
+|--------|------|----------|
+| Cluster management fee | $0.10/hour | ~$73 |
+| Pod CPU | $0.0445/vCPU-hour | varies |
+| Pod memory | $0.0049/GB-hour | varies |
+
+GKE Autopilot has a minimum per-pod resource floor (0.25 vCPU, 0.5 GB RAM). With 8 active
+pods at minimums, expect **~$30–40/month** in pod charges on top of the cluster fee.
+
+> The cluster management fee dominates. **Delete the cluster when not in use** — pod charges
+> stop immediately but the $0.10/hour fee runs as long as the cluster exists.
+
+### GCP HTTP(S) Global Load Balancer
+Provisioned automatically by the GKE Ingress resource. Handles TLS termination and routes
+external traffic into the cluster.
+
+| Charge | Rate | ~Monthly |
+|--------|------|----------|
+| Forwarding rule (first 5) | $0.025/hour each | ~$18 |
+| Ingress data processing | $0.008/GB | negligible at low traffic |
+
+### Global Static IP
+The reserved external IP address (`fakestore-ip`).
+
+| State | Rate | ~Monthly |
+|-------|------|----------|
+| In-use (attached to LB) | free | $0 |
+| Unused / released | $0.010/hour | ~$7 (if cluster is deleted but IP is kept) |
+
+> Release the IP if you tear down the cluster permanently:
+> `gcloud compute addresses delete fakestore-ip --global --project=YOUR_PROJECT_ID`
+
+### Persistent Disks (standard-rwo = pd-balanced)
+Used for PostgreSQL data and catalog image storage.
+
+| Disk | Size | Rate | ~Monthly |
+|------|------|------|----------|
+| postgres-data | 20 GB | $0.100/GB | ~$2 |
+| catalog-images | 20 GB | $0.100/GB | ~$2 |
+| kafka-data | 5 GB | $0.100/GB | ~$0.50 |
+| **Total** | 45 GB | | **~$4.50** |
+
+PVCs persist after cluster deletion. Delete them explicitly if you want to stop paying:
+```bash
+kubectl delete pvc --all -n fakestore
+```
+
+### Google-Managed SSL Certificate
+Free. GCP provisions and auto-renews the TLS cert for `fakestore.route36.com`.
+
+### Container Images (ghcr.io)
+Images are stored on GitHub Container Registry (`ghcr.io/fake-store/`), not GCP.
+Public packages on ghcr.io are free.
+
+---
+
+### Total Estimated Cost
+
+| Component | ~Monthly |
+|-----------|----------|
+| GKE cluster management | ~$73 |
+| Pod resources (8 pods at minimum) | ~$35 |
+| Global Load Balancer | ~$18 |
+| Persistent Disks | ~$5 |
+| Static IP (in-use) | $0 |
+| Managed SSL cert | $0 |
+| **Total** | **~$130/month** |
+
+> **To minimize cost:** Delete the cluster between sessions.
+> PVCs and the static IP can be kept cheaply (~$5.50/month) so you don't lose data or your IP.
+
+---
+
 ## Teardown
 
 ```bash
@@ -224,9 +316,8 @@ gcloud container clusters delete fakestore \
   --region=YOUR_REGION
 ```
 
-> **Note:** GKE Autopilot charges per pod (CPU + memory), not per node.
-> Cost for all fakestore pods at minimum resources is roughly **$15–25/month**.
-> Delete the cluster when not in use.
+Stops all pod and cluster management charges. The static IP and PVCs continue to exist
+(and accrue small charges) until deleted explicitly.
 
 ---
 
@@ -235,8 +326,22 @@ gcloud container clusters delete fakestore \
 ### Get the external IP
 
 ```bash
-kubectl get service website-service -n fakestore
+kubectl get ingress fakestore-ingress -n fakestore
 ```
+
+Or check the reserved static IP directly:
+```bash
+gcloud compute addresses describe fakestore-ip --global --project=YOUR_PROJECT_ID
+```
+
+### Check HTTPS / certificate status
+
+```bash
+kubectl describe managedcertificate fakestore-cert -n fakestore
+```
+
+Certificate status progresses: `Provisioning` → `Active`. Takes 10–15 minutes after DNS
+is pointed at the static IP. HTTPS will not work until status is `Active`.
 
 ### Rotate a secret
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Deploys the fakestore app to GKE.
-# Creates the namespace, applies secrets, and deploys all services.
-# Requires the cluster to be running (run ./cluster-init.sh first).
+# Deploys fakestore to the GCE VM.
+# Writes .env, uploads docker-compose.yml, pulls images, restarts containers.
 # Safe to re-run — all steps are idempotent.
 #
 # Usage:
@@ -10,10 +9,7 @@
 #   ./deploy-fakestore.sh 6      rollback to release 6
 set -euo pipefail
 
-NAMESPACE="fakestore"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-K8S_DIR="$SCRIPT_DIR/../k8s"
-GCP_K8S_DIR="$SCRIPT_DIR/k8s"
 RELEASES_DIR="$SCRIPT_DIR/../releases"
 LOG_DIR="$SCRIPT_DIR/.log"
 LOG="$LOG_DIR/deploy-fakestore.log"
@@ -94,22 +90,22 @@ get_tag() {
   ' "$RELEASE_FILE"
 }
 
-export PAYMENTS_TAG=$(get_tag "payments")
-export USERS_TAG=$(get_tag "users")
-export WEBSITE_TAG=$(get_tag "website")
-export ORDERS_TAG=$(get_tag "orders")
-export SHIPPING_TAG=$(get_tag "shipping")
-export NOTIFICATIONS_TAG=$(get_tag "notifications")
-export CATALOG_TAG=$(get_tag "catalog")
+PAYMENTS_TAG=$(get_tag "payments")
+USERS_TAG=$(get_tag "users")
+WEBSITE_TAG=$(get_tag "website")
+ORDERS_TAG=$(get_tag "orders")
+SHIPPING_TAG=$(get_tag "shipping")
+NOTIFICATIONS_TAG=$(get_tag "notifications")  # fetched but not deployed (ARM64-only image)
+CATALOG_TAG=$(get_tag "catalog")
 
 MISSING_TAGS=()
-[[ -z "$PAYMENTS_TAG" ]]      && MISSING_TAGS+=("payments")
-[[ -z "$USERS_TAG" ]]         && MISSING_TAGS+=("users")
-[[ -z "$WEBSITE_TAG" ]]       && MISSING_TAGS+=("website")
-[[ -z "$ORDERS_TAG" ]]        && MISSING_TAGS+=("orders")
-[[ -z "$SHIPPING_TAG" ]]      && MISSING_TAGS+=("shipping")
-[[ -z "$NOTIFICATIONS_TAG" ]] && MISSING_TAGS+=("notifications")
-[[ -z "$CATALOG_TAG" ]]       && MISSING_TAGS+=("catalog")
+[[ -z "$PAYMENTS_TAG" ]] && MISSING_TAGS+=("payments")
+[[ -z "$USERS_TAG" ]]    && MISSING_TAGS+=("users")
+[[ -z "$WEBSITE_TAG" ]]  && MISSING_TAGS+=("website")
+[[ -z "$ORDERS_TAG" ]]   && MISSING_TAGS+=("orders")
+[[ -z "$SHIPPING_TAG" ]] && MISSING_TAGS+=("shipping")
+[[ -z "$CATALOG_TAG" ]]  && MISSING_TAGS+=("catalog")
+# NOTIFICATIONS_TAG not checked — notifications excluded from GCE (ARM64-only image)
 
 if [[ ${#MISSING_TAGS[@]} -gt 0 ]]; then
   echo "ERROR: missing tags in release file for: ${MISSING_TAGS[*]}"
@@ -138,18 +134,17 @@ fi
 source "$SECRETS_FILE"
 
 MISSING=()
+[[ -z "${GCP_PROJECT:-}" ]]                && MISSING+=("GCP_PROJECT")
+[[ -z "${VM_ZONE:-}" ]]                    && MISSING+=("VM_ZONE")
+[[ -z "${VM_NAME:-}" ]]                    && MISSING+=("VM_NAME")
 [[ -z "${JWT_SECRET:-}" ]]                 && MISSING+=("JWT_SECRET")
 [[ -z "${PG_ADMIN_PASSWORD:-}" ]]          && MISSING+=("PG_ADMIN_PASSWORD")
 [[ -z "${USERS_DB_ADMIN_PASSWORD:-}" ]]    && MISSING+=("USERS_DB_ADMIN_PASSWORD")
 [[ -z "${ORDERS_DB_ADMIN_PASSWORD:-}" ]]   && MISSING+=("ORDERS_DB_ADMIN_PASSWORD")
 [[ -z "${CATALOG_DB_ADMIN_PASSWORD:-}" ]]  && MISSING+=("CATALOG_DB_ADMIN_PASSWORD")
-[[ -z "${PAYMENTS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("PAYMENTS_DB_ADMIN_PASSWORD")
-[[ -z "${SHIPPING_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("SHIPPING_DB_ADMIN_PASSWORD")
 [[ -z "${USERS_DB_PASSWORD:-}" ]]          && MISSING+=("USERS_DB_PASSWORD")
 [[ -z "${ORDERS_DB_PASSWORD:-}" ]]         && MISSING+=("ORDERS_DB_PASSWORD")
 [[ -z "${CATALOG_DB_PASSWORD:-}" ]]        && MISSING+=("CATALOG_DB_PASSWORD")
-[[ -z "${PAYMENTS_DB_PASSWORD:-}" ]]       && MISSING+=("PAYMENTS_DB_PASSWORD")
-[[ -z "${SHIPPING_DB_PASSWORD:-}" ]]       && MISSING+=("SHIPPING_DB_PASSWORD")
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "ERROR: fill in the following variables in secrets.env before running:"
@@ -157,92 +152,66 @@ if [[ ${#MISSING[@]} -gt 0 ]]; then
   exit 1
 fi
 
-# ── Verify cluster is reachable ───────────────────────────────────────────────
+# ── Write .env for docker compose ─────────────────────────────────────────────
 
-if ! command -v kubectl &>/dev/null; then
-  echo "ERROR: kubectl not found. Install via: brew install kubectl"
-  exit 1
-fi
+ENV_FILE=$(mktemp)
+trap 'rm -f "$RELEASE_FILE" "$ENV_FILE"' EXIT
 
-if ! kubectl cluster-info &>/dev/null 2>&1; then
-  echo "ERROR: Cannot reach cluster. Run ./cluster-init.sh first."
-  exit 1
-fi
+cat > "$ENV_FILE" << EOF
+PAYMENTS_TAG=$PAYMENTS_TAG
+USERS_TAG=$USERS_TAG
+WEBSITE_TAG=$WEBSITE_TAG
+ORDERS_TAG=$ORDERS_TAG
+SHIPPING_TAG=$SHIPPING_TAG
+CATALOG_TAG=$CATALOG_TAG
+JWT_SECRET=$JWT_SECRET
+PG_ADMIN_PASSWORD=$PG_ADMIN_PASSWORD
+USERS_DB_ADMIN_PASSWORD=$USERS_DB_ADMIN_PASSWORD
+USERS_DB_PASSWORD=$USERS_DB_PASSWORD
+ORDERS_DB_ADMIN_PASSWORD=$ORDERS_DB_ADMIN_PASSWORD
+ORDERS_DB_PASSWORD=$ORDERS_DB_PASSWORD
+CATALOG_DB_ADMIN_PASSWORD=$CATALOG_DB_ADMIN_PASSWORD
+CATALOG_DB_PASSWORD=$CATALOG_DB_PASSWORD
+PAYMENTS_DB_ADMIN_PASSWORD=${PAYMENTS_DB_ADMIN_PASSWORD:-}
+PAYMENTS_DB_PASSWORD=${PAYMENTS_DB_PASSWORD:-}
+SHIPPING_DB_ADMIN_PASSWORD=${SHIPPING_DB_ADMIN_PASSWORD:-}
+SHIPPING_DB_PASSWORD=${SHIPPING_DB_PASSWORD:-}
+EOF
 
-# ── Deploy ────────────────────────────────────────────────────────────────────
+# ── Upload and deploy ─────────────────────────────────────────────────────────
 
-apply() {
-  local target="$1"
-  echo "  applying: $target"
-  kubectl apply -f "$target"
-  echo
-}
-
-apply_versioned() {
-  local file="$1"
-  echo "  applying: $file"
-  envsubst '${PAYMENTS_TAG} ${USERS_TAG} ${WEBSITE_TAG} ${ORDERS_TAG} ${SHIPPING_TAG} ${NOTIFICATIONS_TAG} ${CATALOG_TAG}' \
-    < "$file" | kubectl apply -f -
-  echo
-}
-
-echo "=== Deploy fakestore (GCP) ==="
+echo "=== Deploy fakestore (GCE) ==="
 echo "Log: $LOG"
 echo
 
-echo "--- Step 1/3: Namespace ---"
-apply "$K8S_DIR/namespace.yml"
+echo "--- Uploading files ---"
+gcloud compute scp "$ENV_FILE" \
+  "$VM_NAME:/tmp/fakestore.env" \
+  --zone="$VM_ZONE" --project="$GCP_PROJECT"
 
-echo "--- Step 2/3: Secrets ---"
-"$SCRIPT_DIR/apply-secrets.sh"
+gcloud compute scp "$SCRIPT_DIR/docker-compose.yml" \
+  "$VM_NAME:/tmp/docker-compose.yml" \
+  --zone="$VM_ZONE" --project="$GCP_PROJECT"
 
-echo "--- Step 3/3: Services ---"
+gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" -- \
+  sudo bash -s << 'REMOTE'
+mv /tmp/fakestore.env      /opt/fakestore/.env
+mv /tmp/docker-compose.yml /opt/fakestore/docker-compose.yml
+chmod 600 /opt/fakestore/.env
+REMOTE
+echo
 
-echo "[ kafka ]"
-apply "$K8S_DIR/kafka/"
-
-echo "[ postgres — GCP override (standard-rwo, no nodeAffinity) ]"
-apply "$GCP_K8S_DIR/postgres.yml"
-
-echo "[ payments ]"
-apply_versioned "$K8S_DIR/payments/payments.yml"
-
-echo "[ users ]"
-apply_versioned "$K8S_DIR/users/users.yml"
-
-echo "[ orders ]"
-apply_versioned "$K8S_DIR/orders/orders.yml"
-
-echo "[ shipping ]"
-apply_versioned "$K8S_DIR/shipping/shipping.yml"
-
-echo "[ notifications ]"
-apply_versioned "$K8S_DIR/notifications/notifications.yml"
-
-echo "[ catalog — GCP override (standard-rwo PVC) ]"
-apply "$GCP_K8S_DIR/catalog-images-pvc.yml"
-apply_versioned "$K8S_DIR/catalog/catalog.yml"
-
-echo "[ website ]"
-apply_versioned "$K8S_DIR/website/website.yml"
-
-echo "[ website-service — GCP override (NodePort for Ingress) ]"
-apply "$GCP_K8S_DIR/website-service.yml"
-
-echo "[ HTTPS — managed certificate + ingress ]"
-apply "$GCP_K8S_DIR/managed-cert.yml"
-apply "$GCP_K8S_DIR/ingress.yml"
+echo "--- Pulling images and restarting containers ---"
+gcloud compute ssh "$VM_NAME" --zone="$VM_ZONE" --project="$GCP_PROJECT" -- \
+  sudo bash -s << 'REMOTE'
+set -euo pipefail
+cd /opt/fakestore
+docker compose pull
+docker compose up -d
+REMOTE
+echo
 
 echo "=== Deployment complete ==="
 echo
-
-echo "Monitor rollout:"
-echo "  kubectl get pods -n $NAMESPACE -w"
-echo
-
-echo "Get external IP (may take a minute while GCP provisions the load balancer):"
-echo "  kubectl get service website-service -n $NAMESPACE"
-echo
-
-echo "Check service health:"
-echo "  ./diag.sh"
+echo "Monitor containers:   ./diag.sh"
+echo "Check HTTPS:          curl -I https://${DOMAIN:-fakestore.route36.com}"
