@@ -1,4 +1,4 @@
-# GCP Deployment
+# GKE Deployment
 
 > **Note:** This deployment is not currently active. Fakestore migrated to a GCE VM
 > (Docker Compose + nginx) to reduce cost from ~$130/month to ~$16/month.

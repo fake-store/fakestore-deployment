@@ -3,7 +3,7 @@ services:
   # ── Infrastructure ────────────────────────────────────────────────────────
 
   postgres:
-    image: postgres:16
+    image: postgres:17
     container_name: fakestore-postgres
     ports:
       - "5432:5432"
@@ -174,12 +174,6 @@ services:
     container_name: fakestore-website
     ports:
       - "80:8080"
-    depends_on:
-      - users
-      - payments
-      - orders
-      - shipping
-      - catalog
     environment:
       SPRING_PROFILES_ACTIVE: ""
       USERS_SERVICE_URL: http://host.docker.internal:8081
