@@ -1,0 +1,15 @@
+# GCP override of the catalog-images PVC
+# Changes from the pi-cluster version:
+#   - storageClassName: standard-rwo (GKE managed persistent disk, replaces local-storage)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: catalog-images-pvc
+  namespace: fakestore
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: standard-rwo
+  resources:
+    requests:
+      storage: 20Gi

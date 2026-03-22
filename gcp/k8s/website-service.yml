@@ -1,0 +1,16 @@
+# GCP override: website-service as NodePort for use with GKE Ingress.
+# TLS is terminated at the Ingress (managed-cert.yml + ingress.yml).
+# This replaces the ClusterIP service defined in k8s/website/website.yml.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: website-service
+  namespace: fakestore
+spec:
+  selector:
+    app: website
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: NodePort

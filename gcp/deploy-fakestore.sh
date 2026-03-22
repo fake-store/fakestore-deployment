@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
-# Deploys the fakestore app to the k3s cluster.
+# Deploys the fakestore app to GKE.
 # Creates the namespace, applies secrets, and deploys all services.
 # Requires the cluster to be running (run ./cluster-init.sh first).
 # Safe to re-run — all steps are idempotent.
 #
 # Usage:
 #   ./deploy-fakestore.sh        fetch latest releases and show available versions
-#   ./deploy-fakestore.sh 47     deploy release 47
-#   ./deploy-fakestore.sh 46     rollback to release 46
+#   ./deploy-fakestore.sh 7      deploy release 7
+#   ./deploy-fakestore.sh 6      rollback to release 6
 set -euo pipefail
 
 NAMESPACE="fakestore"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 K8S_DIR="$SCRIPT_DIR/../k8s"
+GCP_K8S_DIR="$SCRIPT_DIR/k8s"
 RELEASES_DIR="$SCRIPT_DIR/../releases"
 LOG_DIR="$SCRIPT_DIR/.log"
 LOG="$LOG_DIR/deploy-fakestore.log"
@@ -65,7 +66,6 @@ exec > >(tee -a "$LOG") 2>&1
 VERSION_ARG="${1}"
 RELEASE_GITPATH="releases/v${VERSION_ARG}.yml"
 
-# Fetch latest so we can read release files directly from git (avoids stale local files)
 git -C "$SCRIPT_DIR/.." fetch --quiet 2>/dev/null || true
 git -C "$SCRIPT_DIR/.." fetch origin main:main --update-head-ok 2>/dev/null || true
 
@@ -83,7 +83,7 @@ trap 'rm -f "$RELEASE_FILE"' EXIT
 
 echo "Release: v${VERSION_ARG}"
 
-# ── Load image tags from release file ─────────────────────────────────────────
+# ── Load image tags ───────────────────────────────────────────────────────────
 
 get_tag() {
   local service="$1"
@@ -132,17 +132,16 @@ SECRETS_FILE="$SCRIPT_DIR/secrets.env"
 if [[ ! -f "$SECRETS_FILE" ]]; then
   echo "ERROR: secrets.env not found."
   echo "  cp $SCRIPT_DIR/secrets.env.example $SECRETS_FILE"
-  echo "  Then fill in all values and re-run."
   exit 1
 fi
 
 source "$SECRETS_FILE"
 
 MISSING=()
-[[ -z "${JWT_SECRET:-}" ]]                && MISSING+=("JWT_SECRET")
-[[ -z "${PG_ADMIN_PASSWORD:-}" ]]         && MISSING+=("PG_ADMIN_PASSWORD")
-[[ -z "${USERS_DB_ADMIN_PASSWORD:-}" ]]   && MISSING+=("USERS_DB_ADMIN_PASSWORD")
-[[ -z "${ORDERS_DB_ADMIN_PASSWORD:-}" ]]  && MISSING+=("ORDERS_DB_ADMIN_PASSWORD")
+[[ -z "${JWT_SECRET:-}" ]]                 && MISSING+=("JWT_SECRET")
+[[ -z "${PG_ADMIN_PASSWORD:-}" ]]          && MISSING+=("PG_ADMIN_PASSWORD")
+[[ -z "${USERS_DB_ADMIN_PASSWORD:-}" ]]    && MISSING+=("USERS_DB_ADMIN_PASSWORD")
+[[ -z "${ORDERS_DB_ADMIN_PASSWORD:-}" ]]   && MISSING+=("ORDERS_DB_ADMIN_PASSWORD")
 [[ -z "${CATALOG_DB_ADMIN_PASSWORD:-}" ]]  && MISSING+=("CATALOG_DB_ADMIN_PASSWORD")
 [[ -z "${PAYMENTS_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("PAYMENTS_DB_ADMIN_PASSWORD")
 [[ -z "${SHIPPING_DB_ADMIN_PASSWORD:-}" ]] && MISSING+=("SHIPPING_DB_ADMIN_PASSWORD")
@@ -154,16 +153,14 @@ MISSING=()
 
 if [[ ${#MISSING[@]} -gt 0 ]]; then
   echo "ERROR: fill in the following variables in secrets.env before running:"
-  for v in "${MISSING[@]}"; do
-    echo "  - $v"
-  done
+  for v in "${MISSING[@]}"; do echo "  - $v"; done
   exit 1
 fi
 
 # ── Verify cluster is reachable ───────────────────────────────────────────────
 
 if ! command -v kubectl &>/dev/null; then
-  echo "ERROR: kubectl not found. Run ./cluster-init.sh first."
+  echo "ERROR: kubectl not found. Install via: brew install kubectl"
   exit 1
 fi
 
@@ -174,7 +171,6 @@ fi
 
 # ── Deploy ────────────────────────────────────────────────────────────────────
 
-# Infrastructure (kafka, postgres, etc.) — apply directly, no tag substitution
 apply() {
   local target="$1"
   echo "  applying: $target"
@@ -182,7 +178,6 @@ apply() {
   echo
 }
 
-# App services — substitute image tags from release file before applying
 apply_versioned() {
   local file="$1"
   echo "  applying: $file"
@@ -191,7 +186,7 @@ apply_versioned() {
   echo
 }
 
-echo "=== Deploy fakestore ==="
+echo "=== Deploy fakestore (GCP) ==="
 echo "Log: $LOG"
 echo
 
@@ -202,19 +197,12 @@ echo "--- Step 2/3: Secrets ---"
 "$SCRIPT_DIR/apply-secrets.sh"
 
 echo "--- Step 3/3: Services ---"
-echo "[ storage (requires SSD on pi3) ]"
-echo "  ensuring data directories exist on pi3..."
-ssh -i ~/.ssh/pi_cluster_key -o StrictHostKeyChecking=accept-new \
-  "${PI_USER}@192.168.0.163" \
-  "sudo mkdir -p /mnt/sata/data/postgres /mnt/sata/data/catalog-images"
-echo
-apply "$K8S_DIR/storage.yml"
 
 echo "[ kafka ]"
 apply "$K8S_DIR/kafka/"
 
-echo "[ postgres ]"
-apply "$K8S_DIR/postgres/"
+echo "[ postgres — GCP override (standard-rwo, no nodeAffinity) ]"
+apply "$GCP_K8S_DIR/postgres.yml"
 
 echo "[ payments ]"
 apply_versioned "$K8S_DIR/payments/payments.yml"
@@ -231,14 +219,19 @@ apply_versioned "$K8S_DIR/shipping/shipping.yml"
 echo "[ notifications ]"
 apply_versioned "$K8S_DIR/notifications/notifications.yml"
 
-echo "[ catalog ]"
+echo "[ catalog — GCP override (standard-rwo PVC) ]"
+apply "$GCP_K8S_DIR/catalog-images-pvc.yml"
 apply_versioned "$K8S_DIR/catalog/catalog.yml"
 
 echo "[ website ]"
 apply_versioned "$K8S_DIR/website/website.yml"
 
-echo "[ ingress ]"
-apply "$K8S_DIR/ingress.yml"
+echo "[ website-service — GCP override (NodePort for Ingress) ]"
+apply "$GCP_K8S_DIR/website-service.yml"
+
+echo "[ HTTPS — managed certificate + ingress ]"
+apply "$GCP_K8S_DIR/managed-cert.yml"
+apply "$GCP_K8S_DIR/ingress.yml"
 
 echo "=== Deployment complete ==="
 echo
@@ -247,5 +240,9 @@ echo "Monitor rollout:"
 echo "  kubectl get pods -n $NAMESPACE -w"
 echo
 
-echo "Check service status:"
+echo "Get external IP (may take a minute while GCP provisions the load balancer):"
+echo "  kubectl get service website-service -n $NAMESPACE"
+echo
+
+echo "Check service health:"
 echo "  ./diag.sh"

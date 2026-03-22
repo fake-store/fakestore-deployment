@@ -5,8 +5,7 @@ services:
   postgres:
     image: postgres:16
     container_name: fakestore-postgres
-    ports:
-      - "5432:5432"
+    restart: always
     environment:
       POSTGRES_DB: fakestore_users
       POSTGRES_USER: fakestore_admin
@@ -29,8 +28,7 @@ services:
   kafka:
     image: apache/kafka:3.7.1
     container_name: fakestore-kafka
-    ports:
-      - "9091:9091"
+    restart: always
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -44,45 +42,25 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_HEAP_OPTS: "-Xmx200m -Xms128m"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
     healthcheck:
-      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9091 > /dev/null 2>&1"]
-      interval: 10s
-      timeout: 10s
-      retries: 10
-      start_period: 15s
-
-  kafka-ui:
-    image: ghcr.io/kafbat/kafka-ui:latest
-    container_name: fakestore-kafka-ui
-    ports:
-      - "9094:8080"
-    depends_on:
-      - kafka
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list > /dev/null 2>&1"]
+      interval: 15s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
 
   # ── Services ──────────────────────────────────────────────────────────────
   #
-  # All service-to-service HTTP URLs use host.docker.internal so that stopping
-  # a container and running it in your IDE works without any reconfiguration.
-  # Each service container listens on 8080 internally, mapped to its assigned
-  # host port (matching the local dev port scheme in application-local.properties).
-  #
-  # Port scheme:
-  #   8080 = website
-  #   8081 = users
-  #   8082 = payments
-  #   8083 = orders
-  #   8084 = shipping
-  #   8085 = catalog
+  # All service-to-service HTTP URLs use container names.
+  # No ports are exposed to the host except website:8080 (nginx proxies to it).
 
   users:
     image: ghcr.io/fake-store/fakestore-users:${USERS_TAG}
-
     container_name: fakestore-users
-    ports:
-      - "8081:8080"
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
@@ -95,13 +73,12 @@ services:
       DB_ADMIN_USER: fakestore_users_admin
       DB_ADMIN_PASSWORD: ${USERS_DB_ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      JAVA_TOOL_OPTIONS: "-Xmx200m"
 
   payments:
     image: ghcr.io/fake-store/fakestore-payments:${PAYMENTS_TAG}
-
     container_name: fakestore-payments
-    ports:
-      - "8082:8080"
+    restart: always
     depends_on:
       kafka:
         condition: service_healthy
@@ -110,13 +87,12 @@ services:
       SPRING_PROFILES_ACTIVE: ""
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       JWT_SECRET: ${JWT_SECRET}
+      JAVA_TOOL_OPTIONS: "-Xmx200m"
 
   orders:
     image: ghcr.io/fake-store/fakestore-orders:${ORDERS_TAG}
-
     container_name: fakestore-orders
-    ports:
-      - "8083:8080"
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
@@ -133,13 +109,12 @@ services:
       DB_ADMIN_USER: fakestore_orders_admin
       DB_ADMIN_PASSWORD: ${ORDERS_DB_ADMIN_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
+      JAVA_TOOL_OPTIONS: "-Xmx200m"
 
   shipping:
     image: ghcr.io/fake-store/fakestore-shipping:${SHIPPING_TAG}
-
     container_name: fakestore-shipping
-    ports:
-      - "8084:8080"
+    restart: always
     depends_on:
       kafka:
         condition: service_healthy
@@ -150,10 +125,8 @@ services:
 
   catalog:
     image: ghcr.io/fake-store/fakestore-catalog:${CATALOG_TAG}
-
     container_name: fakestore-catalog
-    ports:
-      - "8085:8080"
+    restart: always
     depends_on:
       postgres:
         condition: service_healthy
@@ -168,12 +141,15 @@ services:
     volumes:
       - catalog-images:/app/images
 
+  # notifications excluded — image is ARM64-only (built for pi cluster)
+  # add back once CI builds multi-arch
+
   website:
     image: ghcr.io/fake-store/fakestore-website:${WEBSITE_TAG}
-
     container_name: fakestore-website
+    restart: always
     ports:
-      - "80:8080"
+      - "127.0.0.1:8080:8080"
     depends_on:
       - users
       - payments
@@ -182,13 +158,15 @@ services:
       - catalog
     environment:
       SPRING_PROFILES_ACTIVE: ""
-      USERS_SERVICE_URL: http://host.docker.internal:8081
-      PAYMENTS_SERVICE_URL: http://host.docker.internal:8082
-      ORDERS_SERVICE_URL: http://host.docker.internal:8083
-      SHIPPING_SERVICE_URL: http://host.docker.internal:8084
-      CATALOG_SERVICE_URL: http://host.docker.internal:8085
+      USERS_SERVICE_URL: http://users:8080
+      PAYMENTS_SERVICE_URL: http://payments:8080
+      ORDERS_SERVICE_URL: http://orders:8080
+      SHIPPING_SERVICE_URL: http://shipping:8080
+      CATALOG_SERVICE_URL: http://catalog:8080
       JWT_SECRET: ${JWT_SECRET}
+      JAVA_TOOL_OPTIONS: "-Xmx256m"
 
 volumes:
   postgres-data:
+  kafka-data:
   catalog-images:
